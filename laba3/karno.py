@@ -218,127 +218,108 @@ class LogicFormul:
             return ""
 
         rows, cols = len(self.k_map), len(self.k_map[0])
-        gray_rows = [0, 1, 3, 2] if n >= 4 else ([0, 1] if n == 2 or n == 3 else [0])
-        gray_cols = [0, 1, 3, 2, 6, 7, 5, 4] if n == 5 else ([0, 1, 3, 2] if n >= 3 else [0, 1])
-        implicants = []
+        gray_rows = self._get_gray_rows(n)
+        gray_cols = self._get_gray_cols(n)
+        implicants = self._generate_zero_groups(rows, cols, gray_rows, gray_cols)
 
-        # Поиск групп нулей (ограничиваем размер групп до 8 ячеек)
-        for i in range(rows):
-            for j in range(cols):
-                if self.k_map[i][j] == 0:
-                    for h in [1, 2, 4][:rows]:
-                        for w in [1, 2, 4, 8][:cols]:
-                            if h * w > 8:
-                                continue
-                            if h > rows or w > cols:
-                                continue
-                            valid = True
-                            cells = []
-                            for r in range(i, i + h):
-                                for c in range(j, j + w):
-                                    r_wrap = r % rows
-                                    c_wrap = c % cols
-                                    if self.k_map[r_wrap][c_wrap] != 0:
-                                        valid = False
-                                        break
-                                    cells.append((r_wrap, c_wrap))
-                                if not valid:
-                                    break
-                            if valid and cells:
-                                implicants.append(cells)
-
-        implicants = sorted([list(set(cells)) for cells in implicants], key=len, reverse=True)
-
-        # Поиск основных импликант
         zeros = [(i, j) for i in range(rows) for j in range(cols) if self.k_map[i][j] == 0]
-        essential_implicants = []
-        covered = set()
-        terms = []
+        essential_implicants, covered, terms = self._find_essential_implicants(
+        zeros, implicants, gray_rows, gray_cols, n
+        )
 
-        for cell in zeros:
-            cell_implicants = [imp for imp in implicants if cell in imp]
-            if len(cell_implicants) == 1:
-                imp = cell_implicants[0]
-                if imp not in essential_implicants:
-                    essential_implicants.append(imp)
-                    covered.update(imp)
-                    row_indices = set(r for r, _ in imp)
-                    col_indices = set(c for _, c in imp)
-                    row_bits = [bin(gray_rows[r])[2:].zfill(len(self.variables[:(n // 2)])) for r in row_indices]
-                    col_bits = [bin(gray_cols[c])[2:].zfill(len(self.variables[(n // 2):])) for c in col_indices]
-                    bit_sets = [set(rb[i] for rb in row_bits) for i in range(len(row_bits[0]))] + \
-                               [set(cb[i] for cb in col_bits) for i in range(len(col_bits[0]))]
-                    term = []
-                    for i, bits in enumerate(bit_sets):
-                        if len(bits) == 1:
-                            var = self.variables[i]
-                            val = bits.pop()
-                            term.append(f"!{var}" if val == '1' else var)
-                    if term:
-                        terms.append('(' + ' | '.join(term) + ')')
+    remaining_zeros = set(zeros) - covered
+    used_variables = set(var for term in terms for var in term if var.startswith('!') or var.isalpha())
 
-        # Фильтрация импликант с проверкой конфликтов
-        filtered_implicants = essential_implicants[:]
-        remaining_zeros = set(zeros) - covered
-        used_variables = set(var for term in terms for var in term if var.startswith('!') or var.isalpha())
+    print("\nМинимизированная СКНФ:")
+    print(" & ".join(terms))
+    return " & ".join(terms)
 
-        while remaining_zeros:
-            best_implicant = None
-            max_coverage = 0
-            best_score = 0
-            best_term = None
-            for imp in implicants:
-                if imp not in filtered_implicants:
-                    coverage = len(set(imp) & remaining_zeros)
-                    row_indices = set(r for r, _ in imp)
-                    col_indices = set(c for _, c in imp)
-                    row_bits = [bin(gray_rows[r])[2:].zfill(len(self.variables[:(n // 2)])) for r in row_indices]
-                    col_bits = [bin(gray_cols[c])[2:].zfill(len(self.variables[(n // 2):])) for c in col_indices]
-                    bit_sets = [set(rb[i] for rb in row_bits) for i in range(len(row_bits[0]))] + \
-                               [set(cb[i] for cb in col_bits) for i in range(len(col_bits[0]))]
-                    num_vars = sum(1 for s in bit_sets if len(s) == 1)
-                    term = []
-                    term_vars = set()
-                    for i, bits in enumerate(bit_sets):
-                        if len(bits) == 1:
-                            var = self.variables[i]
-                            val = bits.pop()
-                            term.append(f"!{var}" if val == '1' else var)
-                            term_vars.add(var)
-                    conflict = False
-                    for var in term_vars:
-                        if var in used_variables and any(f"!{var}" in t or var in t for t in terms):
-                            conflict = True
-                            break
-                    score = coverage * 1000 - num_vars * 200
-                    if coverage > 0 and not conflict and (
-                            coverage > max_coverage or (coverage == max_coverage and score > best_score)):
-                        max_coverage = coverage
-                        best_implicant = imp
-                        best_score = score
-                        best_term = term
 
-            if best_implicant and best_term:
-                filtered_implicants.append(best_implicant)
-                covered.update(best_implicant)
-                remaining_zeros -= set(best_implicant)
-                used_variables.update(var for var in best_term if var.startswith('!') or var.isalpha())
-                terms.append('(' + ' | '.join(best_term) + ')')
+def _get_gray_rows(self, n):
+    return [0, 1, 3, 2] if n >= 4 else ([0, 1] if n == 2 or n == 3 else [0])
 
-        # Подготовка таблицы для minimize_sknf_quine_mccluskey
-        table = []
-        for i in range(rows):
-            for j in range(cols):
-                # Формируем значения переменных на основе gray_rows и gray_cols
-                row_bits = bin(gray_rows[i])[2:].zfill(len(self.variables[:(n // 2)]))
-                col_bits = bin(gray_cols[j])[2:].zfill(len(self.variables[(n // 2):]))
-                vals = list(row_bits + col_bits)
-                vals = [int(v) for v in vals]
-                res = self.k_map[i][j]
-                table.append((vals, res))
 
-        # Вызов функции минимизации
-        result = " & ".join(terms) if terms else "1"
+def _get_gray_cols(self, n):
+    return [0, 1, 3, 2, 6, 7, 5, 4] if n == 5 else ([0, 1, 3, 2] if n >= 3 else [0, 1])
+
+
+def _group_sizes(self, rows, cols):
+    sizes = []
+    for h in [1, 2, 4][:rows]:
+        for w in [1, 2, 4, 8][:cols]:
+            if h * w <= 8:
+                sizes.append((h, w))
+    return sizes
+
+
+def _generate_zero_groups(self, rows, cols, gray_rows, gray_cols):
+    groups = []
+    for i in range(rows):
+        for j in range(cols):
+            if self.k_map[i][j] == 0:
+                groups.extend(self._find_groups_from_cell(i, j, rows, cols))
+    return groups
+
+
+def _find_groups_from_cell(self, i, j, rows, cols):
+    cell_groups = []
+    for h, w in self._group_sizes(rows, cols):
+        group = self._check_zero_group(i, j, h, w, rows, cols)
+        if group:
+            cell_groups.append(group)
+    return cell_groups
+
+
+def _check_zero_group(self, i, j, h, w, rows, cols):
+    group = []
+    for r in range(i, i + h):
+        for c in range(j, j + w):
+            r_wrap = r % rows
+            c_wrap = c % cols
+            if self.k_map[r_wrap][c_wrap] != 0:
+                return None
+            group.append((r_wrap, c_wrap))
+    return group
+
+
+def _find_essential_implicants(self, zeros, implicants, gray_rows, gray_cols, n):
+    essential_implicants = []
+    covered = set()
+    terms = []
+
+    for cell in zeros:
+        cell_implicants = [imp for imp in implicants if cell in imp]
+        if len(cell_implicants) == 1:
+            imp = cell_implicants[0]
+            if imp not in essential_implicants:
+                essential_implicants.append(imp)
+                covered.update(imp)
+                term = self._generate_term_from_implicant(imp, gray_rows, gray_cols, n)
+                if term:
+                    terms.append('(' + ' | '.join(term) + ')')
+    return essential_implicants, covered, terms
+
+
+def _generate_term_from_implicant(self, implicant, gray_rows, gray_cols, n):
+    row_indices = set(r for r, _ in implicant)
+    col_indices = set(c for _, c in implicant)
+
+    row_bits = [bin(gray_rows[r])[2:].zfill(len(self.variables[:(n // 2)])) for r in row_indices]
+    col_bits = [bin(gray_cols[c])[2:].zfill(len(self.variables[(n // 2):])) for c in col_indices]
+
+    bit_sets = [set(rb[i] for rb in row_bits) for i in range(len(row_bits[0]))] + \
+               [set(cb[i] for cb in col_bits) for i in range(len(col_bits[0]))]
+
+    term = []
+    for i, bits in enumerate(bit_sets):
+        if len(bits) == 1:
+            var = self.variables[i]
+            val = bits.pop()
+            term.append(f"!{var}" if val == '1' else var)
+    return term
+
+
+      
 
 
 
