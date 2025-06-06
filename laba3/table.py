@@ -13,32 +13,50 @@ class Logicformula:
                 variables.add(char)
         return sorted(variables)
 
-    def calc(self, express):
-        preced = {'not': 3, 'and': 2, 'or': 1, '==': 1, '<=': 1}
+   def calc(self, express):
+        tokens = self.tokenize(express)
+        rpn = self.to_rpn(tokens)
+        return self.evaluate_rpn(rpn)
+
+    def tokenize(self, expr):
+        expr = expr.replace('(', ' ( ').replace(')', ' ) ')
+        return expr.split()
+
+    def to_rpn(self, tokens):
         output = []
-        operand = []
-        express = express.replace('(', ' ( ').replace(')', ' ) ')
-        tokens = express.split()
+        operators = []
 
         for token in tokens:
             if token in ('0', '1'):
                 output.append(int(token))
-            elif token in preced:
-                while operand and operand[-1] != '(' and preced.get(operand[-1], 0) >= preced[token]:
-                    output.append(operand.pop())
-                operand.append(token)
+            elif token in self.precedence:
+                self.handle_operator(token, operators, output)
             elif token == '(':
-                operand.append(token)
+                operators.append(token)
             elif token == ')':
-                while operand and operand[-1] != '(':
-                    output.append(operand.pop())
-                operand.pop()
+                self.handle_closing_parenthesis(operators, output)
 
-        while operand:
-            output.append(operand.pop())
+        while operators:
+            output.append(operators.pop())
 
+        return output
+
+    def handle_operator(self, token, operators, output):
+        while (operators and operators[-1] != '(' and
+               self.precedence.get(operators[-1], 0) >= self.precedence[token]):
+            output.append(operators.pop())
+        operators.append(token)
+
+    def handle_closing_parenthesis(self, operators, output):
+        while operators and operators[-1] != '(':
+            output.append(operators.pop())
+        if operators and operators[-1] == '(':
+            operators.pop()
+
+    def evaluate_rpn(self, rpn):
         stack = []
-        for token in output:
+
+        for token in rpn:
             if isinstance(token, int):
                 stack.append(token)
             elif token == 'not':
@@ -46,15 +64,10 @@ class Logicformula:
             else:
                 b = stack.pop()
                 a = stack.pop()
-                if token == 'and':
-                    stack.append(a & b)
-                elif token == 'or':
-                    stack.append(a | b)
-                elif token == '==':
-                    stack.append(1 if a == b else 0)
-                elif token == '<=':
-                    stack.append(int(not a or b))
+                stack.append(self.apply_operator(token, a, b))
+
         return stack[0]
+
 
     def evalu(self, value):
         express = self.formula
